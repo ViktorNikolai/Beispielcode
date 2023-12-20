@@ -161,9 +161,9 @@ EM <- function(th, t) {
   } else {
     th[5] + (200 * th[4] * (exp(-th[2]*t) - exp(-th[1]*t) + exp(-th[2]*(t-84)) - exp(-th[1]*(t-84)))) / (th[3] * (1-(th[2]/th[1])) +  200 * (exp(-th[2]*t) - exp(-th[1]*t) + exp(-th[2]*(t-84)) - exp(-th[1]*(t-84))))
   }
-} # Gabe von 200 Einheiten jeweils zu Zeitpunkt 0 und 84
+} # Gabe von 200 Einheiten jeweils zum Zeitpunkt 0 und 84
 
-m <- c(0, 10, 50, 100, 200, 300)
+m <- c(0, 10, 50, 100, 200, 300) # Messzeitpunkte
 
 print(c(EM(th, m[1]), EM(th, m[2]), EM(th, m[3]), EM(th, m[4]), EM(th, m[5]), EM(th, m[6]))) # Wahre erwartete Wirkungen
 # 100.00000  28.37858  30.31906  26.17844  57.13033  95.61485
