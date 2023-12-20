@@ -1,0 +1,224 @@
+library(MASS)
+library(numDeriv)
+library(alabama)
+library(matrixcalc)
+
+# (i) Generieren von Datensätzen auf Basis eines nichtlinearen Regressionsmodells
+
+l <- 10 # Anzahl der Patienten pro Dosis
+
+th <- c(0.07, 0.03, 10.00, -80.00, 100.00) # Wahre Werte der Parameter th1, ..., th5
+
+t <- cbind(c(0, 7, 14, 21, 28, 56, 84, 112, 140, 168)) # 10 Messzeiten in Zeilen
+D <- 100 * rbind(c(rep(0.25, l), rep(0.5, l), rep(1, l), rep(2, l), rep(3, l))) # 5*l Dosen in Spalten
+E <- th[5] + (th[4] * (exp(-th[2] * t) - exp(-th[1] * t)) %*% D) / (th[3] * (1 - th[2]/th[1]) + (exp(-th[2] * t) - exp(-th[1] * t)) %*% D) # 5*l Erwartungswertvektoren für 5*l Patienten
+
+t1 <- matrix(rep(t, 10), nrow = 10)
+Cov <- 70**2 * 0.8**(abs(t1-t(t1))/7) # bekannte 10x10-Kovarianzmatrix für jeden Patient
+
+datasets <- list()
+y <- matrix(data = NA, nrow = 10, ncol = 5*l)
+
+set.seed(31415)
+for(i in 1:1200){
+  for(j in 1:(5*l)){
+    y[,j] <- cbind(mvrnorm(1, E[,j], Cov))
+  }
+  datasets[[i]] <- y
+} # Liste bestehend aus 2000 Matrizen mit je 10*5*l zufälligen Werten 
+
+# (ii) Berechnen der ML-Schätzungen für th1, ...,th5
+
+negl <- function(th, y, D, t) {
+  
+  mu <- function(th, D, t, i) {
+    th[5] + (th[4] * D[i] * (exp(-th[2]*t) - exp(-th[1]*t))) / (th[3] * (1-(th[2]/th[1])) +  D[i] * (exp(-th[2]*t) - exp(-th[1]*t)))
+  }
+  
+  S <- function(t) {
+    t1 <- matrix(rep(t, 10), nrow = 10)
+    70**2 * 0.8**(abs(t1-t(t1))/7)
+  }
+  
+  sum <- function(th, y, D, t) {
+    sum0 <- 0
+    for(i in 1:(5*l)){
+      sum0 <- sum0 + t(matrix(y[,i]) - mu(th, D, t, i)) %*% solve(S(t)) %*% (matrix(y[,i]) - mu(th, D, t, i))
+    }
+    sum0
+  }
+  
+  -(-(5*5*l) * log(2*pi) - ((1/2)*5*l) * log(det(S(t))) - (1/2) * sum(th, y, D, t)) 
+} # Negative Log-Likelihood-Funktion
+
+result3 <- matrix(data = NA, nrow = 5, ncol = 1200) # result3 und I3 via auglag
+I3 <- list()
+
+hin <- function(th, y, D, t) {
+  th[1] - th[2]
+} # Hilfsfunktion
+
+start.time <- Sys.time()
+for(i in 1:1200){
+  save <- auglag(par = th, fn = negl, hin = hin, y = datasets[[i]], D = D, t = t)
+  result3[,i] <- cbind(save$par)
+  I3[[i]] <- save$hessian # Problem: Die numerisch berechneten Hesse-Matrizen sind i. A. nicht positiv semidefinit und symmetrisch.
+  print(i)
+}
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+print(time.taken) 
+
+result3nS <- matrix(data = NA, nrow = 5, ncol = 2000) # result3nS und I3nS mit nicht-singulären Hesse-Matrizen mit dem Ziel, diese zu invertieren
+I3nS <- list()
+datasets3nS <- list()
+
+for(i in 1:1200){
+  if(is.singular.matrix(I3[[i]], tol = 1e-8) == FALSE){
+    result3nS[,i] <- result3[,i]
+    I3nS[[i]] <- I3[[i]]
+    datasets3nS[[i]] <- datasets[[i]]
+  }
+}
+
+result3nS <- result3nS[,colSums(is.na(result3nS)) == 0]
+I3nS[sapply(I3nS, is.null)] <- NULL
+datasets3nS[sapply(datasets3nS, is.null)] <- NULL
+
+result6 <- matrix(data = NA, nrow = 5, ncol = 2000) # result6 und I6 via auglag mit symmetrischen Hesse-Matrizen, deren Inversen positiv semidefinit sind
+I6 <- list()
+datasets6 <- list()
+
+for(i in 1:length(result3nS[1,])){
+  Mat <- I3nS[[i]]
+  val <- (Mat[lower.tri(Mat)] + t(Mat)[lower.tri(Mat)])/2
+  Mat[lower.tri(Mat)] <- val
+  Mat[upper.tri(Mat)] <- val[c(1,2,5,3,6,8,4,7,9,10)]
+  
+  invMat <- solve(I3nS[[i]])
+  val2 <- (invMat[lower.tri(invMat)] + t(invMat)[lower.tri(invMat)])/2
+  invMat[lower.tri(invMat)] <- val2
+  invMat[upper.tri(invMat)] <- val2[c(1,2,5,3,6,8,4,7,9,10)]
+  
+  if(is.positive.semi.definite(invMat, tol = 1e-8)){
+    result6[,i] <- result3nS[,i]
+    I6[[i]] <- Mat
+    datasets6[[i]] <- datasets3nS[[i]]
+  }
+}
+
+result6 <- result6[,colSums(is.na(result6)) == 0]
+I6[sapply(I6, is.null)] <- NULL
+datasets6[sapply(datasets6, is.null)] <- NULL
+
+result <- matrix(data = NA, nrow = 5, ncol = 1000) # Genau 1000 Resultate 
+I <- list()
+datasetsfinal <- list()
+
+for(i in 1:1000){
+  result[,i] <- result6[,i]
+  I[[i]] <- I6[[i]]
+  datasetsfinal[[i]] <- datasets6[[i]]
+}
+
+MLth <- c(median(result[1,]), median(result[2,]), median(result[3,]), median(result[4,]), median(result[5,]))
+print(MLth) # Mediane der ML-Schätzungen für th1, ..., th5 
+# set.seed(31415), l = 10: 0.06440420  0.03319078  10.05768854 -80.94379756 100.18369993
+
+# (iii) Berechnen der empirischen Überdeckungswahrscheinlichkeiten der Konfidenzintervalle für th1, ...,th5 über asymptotische Methoden
+
+percent <- 0.95
+factor <- qnorm(1-(1-percent)/2)
+
+CI <- matrix(data = NA, nrow = 10, ncol = length(result[1,])) 
+
+for(i in 1:length(result[1,])){
+  for(j in 1:5){
+    CI[(2*j-1):(2*j),i] <- result[j,i] + c(-1,1) * factor * sqrt(solve(I[[i]])[j,j])
+  }
+}
+
+counter <- numeric(5)
+
+for(i in 1:length(result[1,])){
+  for(j in 1:5){
+    if(th[j] >= CI[(2*j-1),i] & th[j] <= CI[(2*j),i]){
+    counter[j] <- counter[j] + 1
+    }
+  }
+}
+
+CIC <- counter / length(result[1,])
+print(CIC) # Überdeckungswahrscheinlichkeiten der Konfidenzintervalle für th1, ...,th5 über asymptotische Methoden
+# set.seed(31415), l = 10: 0.954 0.952 0.929 0.958 0.948 [95 %]
+# set.seed(31415), l = 10: 0.918 0.921 0.900 0.923 0.897 [90 %]
+
+# (iv) Mehrere Dosen (ML-Schätzungen für die erwarteten Wirkungen und Überdeckungswahrscheinlichkeiten über asymptotische Methoden)
+
+EM <- function(th, t) {
+  if(t <= 84) {
+    th[5] + (200 * th[4] * (exp(-th[2]*t) - exp(-th[1]*t))) / (th[3] * (1-(th[2]/th[1])) +  200 * (exp(-th[2]*t) - exp(-th[1]*t)))
+  } else {
+    th[5] + (200 * th[4] * (exp(-th[2]*t) - exp(-th[1]*t) + exp(-th[2]*(t-84)) - exp(-th[1]*(t-84)))) / (th[3] * (1-(th[2]/th[1])) +  200 * (exp(-th[2]*t) - exp(-th[1]*t) + exp(-th[2]*(t-84)) - exp(-th[1]*(t-84))))
+  }
+} # Gabe von 200 Einheiten jeweils zu Zeitpunkt 0 und 84
+
+m <- c(0, 10, 50, 100, 200, 300)
+
+print(c(EM(th, m[1]), EM(th, m[2]), EM(th, m[3]), EM(th, m[4]), EM(th, m[5]), EM(th, m[6]))) # Wahre erwartete Wirkungen
+# 100.00000  28.37858  30.31906  26.17844  57.13033  95.61485
+
+multd <- matrix(data = NA, nrow = 6, ncol = length(result[1,]))
+
+for(i in 1:length(result[1,])){
+  for(j in 1:6){
+    multd[j,i] <- EM(result[,i], m[j])
+  }
+}
+
+print(c(median(multd[1,]), median(multd[2,]), median(multd[3,]), median(multd[4,]), median(multd[5,]), median(multd[6,]))) 
+# Mediane der ML-Schätzungen für die erwarteten Wirkungen  
+# set.seed(31415), l = 10: 100.18370  28.58613  31.40657  25.92006  57.83928  93.54236
+
+gdiff <- function(th, t) {
+  if(t <= 84) {
+    g1 <- 200 * th[4] * (exp(-th[1] * t) * t)/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t))) - (200 * th[4] * (exp(-th[2] * t) - exp(-th[1] * t))) * (th[3] * (th[2]/th[1]^2) + 200 * (exp(-th[1] * t) * t))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t)))^2
+    g2 <- -(200 * th[4] * (exp(-th[2] * t) * t)/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t))) - (200 * th[4] * (exp(-th[2] * t) - exp(-th[1] * t))) * (200 * (exp(-th[2] * t) * t) + th[3] * (1/th[1]))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t)))^2) 
+    g3 <- -((200 * th[4] * (exp(-th[2] * t) - exp(-th[1] * t))) * (1 - (th[2]/th[1]))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t)))^2) 
+    g4 <- 200 * (exp(-th[2] * t) - exp(-th[1] * t))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t)))
+    g5 <- 1  
+  } else {
+    g1 <- 200 * th[4] * (exp(-th[1] * t) * t + exp(-th[1] * (t - 84)) * (t - 84))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84)))) - (200 * th[4] * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84)))) * (th[3] * (th[2]/th[1]^2) + 200 * (exp(-th[1] * t) * t + exp(-th[1] * (t - 84)) * (t - 84)))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84))))^2
+    g2 <- -(200 * th[4] * (exp(-th[2] * (t - 84)) * (t - 84) + exp(-th[2] * t) * t)/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84)))) - (200 * th[4] * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84)))) * (200 * (exp(-th[2] * (t - 84)) * (t - 84) + exp(-th[2] * t) * t) + th[3] * (1/th[1]))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84))))^2) 
+    g3 <- -((200 * th[4] * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84)))) * (1 - (th[2]/th[1]))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84))))^2) 
+    g4 <- 200 * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84)))/(th[3] * (1 - (th[2]/th[1])) + 200 * (exp(-th[2] * t) - exp(-th[1] * t) + exp(-th[2] * (t - 84)) - exp(-th[1] * (t - 84))))
+    g5 <- 1  
+  }
+  rbind(c(g1, g2, g3, g4, g5))
+} # Gradient von EM
+
+percent <- 0.95
+factor <- qnorm(1-(1-percent)/2)
+
+CI2 <- matrix(data = NA, nrow = 12, ncol = length(result[1,])) # Konfidenzintervalle für die erwarteten Wirkungen
+
+for(i in 1:length(result[1,])){
+  for(j in 1:6){
+    CI2[(2*j-1):(2*j),i] <- EM(result[,i], m[j]) + c(-1,1) * factor * c(sqrt(gdiff(result[,i], m[j]) %*% solve(I[[i]]) %*% t(gdiff(result[,i], m[j]))))
+  }
+}
+
+counter2 <- numeric(6)
+
+for(i in 1:length(result[1,])){
+  for(j in 1:6){
+    if(EM(th, m[j]) >= CI2[(2*j-1),i] & EM(th, m[j]) <= CI2[(2*j),i]){
+      counter2[j] <- counter2[j] + 1
+    }
+  }
+}
+
+CIC2 <- counter2 / length(result[1,])
+print(CIC2) # Empirische Überdeckungswahrscheinlichkeiten der Konfidenzintervalle für die erwarteten Wirkungen über asymptotische Methoden
+# set.seed(31415), l = 10: 0.948 0.949 0.953 0.949 0.922 0.959 [95 %]
+# set.seed(31415), l = 10: 0.897 0.894 0.898 0.897 0.858 0.911 [90 %]
