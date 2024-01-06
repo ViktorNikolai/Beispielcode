@@ -27,7 +27,7 @@ for(i in 1:1200){
   datasets[[i]] <- y
 } # Liste bestehend aus 1200 Matrizen mit je 10*5*l zufälligen Werten 
 
-# (ii) Berechnen der ML-Schätzungen für th1, ...,th5
+# (ii) Berechnen der ML-Schätzungen für th1, ..., th5
 
 negl <- function(th, y, D, t) {
   
