@@ -25,7 +25,7 @@ for(i in 1:1200){
     y[,j] <- cbind(mvrnorm(1, E[,j], Cov))
   }
   datasets[[i]] <- y
-} # Liste bestehend aus 2000 Matrizen mit je 10*5*l zufälligen Werten 
+} # Liste bestehend aus 1200 Matrizen mit je 10*5*l zufälligen Werten 
 
 # (ii) Berechnen der ML-Schätzungen für th1, ...,th5
 
